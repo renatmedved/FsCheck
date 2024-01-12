@@ -1,23 +1,15 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-using FsCheck;
-using FsCheck.Fluent;
+﻿using FsCheck.Fluent;
 using FsCheck.Xunit;
 
-using Xunit;
 using Xunit.Abstractions;
 
 namespace FsCheck.XUnit.CSharpExamples
 {
-    public class OutputhelperTest
+    public class OutputHelperTest
     {
         private readonly ITestOutputHelper _outputHelper;
 
-        public OutputhelperTest(ITestOutputHelper outputHelper)
+        public OutputHelperTest(ITestOutputHelper outputHelper)
         {
             _outputHelper = outputHelper;
         }
