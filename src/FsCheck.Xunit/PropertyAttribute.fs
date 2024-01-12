@@ -156,6 +156,9 @@ type public PropertyAttribute() =
     member __.QuietOnSuccess with get() = quietOnSuccess and set(v) = quietOnSuccess <- v; config <- {config with QuietOnSuccess = Some v}
 
     member internal __.Config = config
+    
+type public IPropertyConfigProviderAttribute =
+    abstract GetPropertyTestConfig: unit->PropertyAttribute
 
 ///Set common configuration for all properties within this class or module
 [<AttributeUsage(AttributeTargets.Class ||| AttributeTargets.Assembly, AllowMultiple = false)>]
@@ -189,7 +192,8 @@ type PropertyTestCase(diagnosticMessageSink:IMessageSink, defaultMethodDisplay:T
         let config = combineAttributes [
               yield this.TestMethod.TestClass.Class.Assembly.GetCustomAttributes(typeof<PropertiesAttribute>) |> Seq.tryHead |> Option.map getConfig
               yield! getPropertiesOnDeclaringClasses this.TestMethod.TestClass
-              yield this.TestMethod.Method.GetCustomAttributes(typeof<PropertyAttribute>) |> Seq.head |> getConfig |> Some]
+              yield this.TestMethod.Method.GetCustomAttributes(typeof<PropertyAttribute>) |> Seq.head |> getConfig |> Some
+              yield this.TestMethod.Method.GetCustomAttributes(typeof<IPropertyConfigProviderAttribute>) |> Seq.head |> getConfig |> Some]
         
         { config with Arbitrary = config.Arbitrary }
         |> PropertyConfig.toConfig output 
