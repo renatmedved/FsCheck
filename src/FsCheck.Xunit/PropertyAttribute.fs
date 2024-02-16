@@ -4,6 +4,8 @@ open System
 open System.Reflection
 open System.Threading.Tasks
 
+open FsCheck.FSharp
+open Microsoft.FSharp.Reflection
 open Xunit
 open Xunit.Sdk
 open Xunit.Abstractions
@@ -69,7 +71,7 @@ module internal PropertyConfig =
           EndSize        = extra.EndSize        |> orElse original.EndSize
           Verbose        = extra.Verbose        |> orElse original.Verbose
           QuietOnSuccess = extra.QuietOnSuccess |> orElse original.QuietOnSuccess
-          Arbitrary      = Array.append extra.Arbitrary original.Arbitrary }
+          Arbitrary      = Array.append extra.Arbitrary original.Arbitrary  }
 
     let parseReplay (str: string) =
         //if someone sets this, we want it to throw if it fails
@@ -110,7 +112,7 @@ module internal PropertyConfig =
                   else 
                       Config.Quick.EveryShrink
               )
-
+              
 ///Run this method as an FsCheck test.
 [<AttributeUsage(AttributeTargets.Method ||| AttributeTargets.Property, AllowMultiple = false)>]
 [<XunitTestCaseDiscoverer("FsCheck.Xunit.PropertyDiscoverer", "FsCheck.Xunit")>]
@@ -156,13 +158,66 @@ type public PropertyAttribute() =
     member __.QuietOnSuccess with get() = quietOnSuccess and set(v) = quietOnSuccess <- v; config <- {config with QuietOnSuccess = Some v}
 
     member internal __.Config = config
+    
+///Run this method as an FsCheck test.
+[<AttributeUsage(AttributeTargets.Method ||| AttributeTargets.Property, AllowMultiple = false)>]
+[<XunitTestCaseDiscoverer("FsCheck.Xunit.PropertyDiscoverer", "FsCheck.Xunit")>]
+type public PropertyTheoryAttribute() =
+    inherit TheoryAttribute()
+    let mutable config = PropertyConfig.zero
+    let mutable replay = null
+    let mutable parallelism = -1
+    let mutable maxTest = -1
+    let mutable maxRejected = -1
+    let mutable startSize = -1
+    let mutable endSize = -1
+    let mutable verbose = false
+    let mutable arbitrary = [||]
+    let mutable quietOnSuccess = false
+    
+    ///If set, the seed to use to start testing. Allows reproduction of previous runs. You can just paste
+    ///the tuple from the output window, e.g. 12344,12312 or (123,123).
+    member __.Replay with get() = replay and set(v) = replay <- v; config <- {config with Replay = if String.IsNullOrEmpty v then None else Some v}
+    ///If set, run tests in parallel. Useful for Task/async related work and heavy number crunching
+    ///Environment.ProcessorCount have been found to be useful default.
+    member __.Parallelism with get() = parallelism and set(v) = parallelism <- v; config <- {config with Parallelism = Some v}
+    ///The maximum number of tests that are run.
+    member __.MaxTest with get() = maxTest and set(v) = maxTest <- v; config <- {config with MaxTest = Some v}
+    ///The maximum number of tests where values are rejected, e.g. as the result of ==>
+    member __.MaxRejected with get() = maxRejected and set(v) = maxRejected <- v; config <- {config with MaxRejected = Some v}
+    ///The size to use for the first test.
+    member __.StartSize with get() = startSize and set(v) = startSize <- v; config <- {config with StartSize = Some v}
+    ///The size to use for the last test, when all the tests are passing. The size increases linearly between Start- and EndSize.
+    member __.EndSize with get() = endSize and set(v) = endSize <- v; config <- {config with EndSize = Some v}
+    ///Output all generated arguments.
+    member __.Verbose with get() = verbose and set(v) = verbose <- v; config <- {config with Verbose = Some v}
+    ///The Arbitrary instances to use for this test method. The Arbitrary instances
+    ///are merged in back to front order i.e. instances for the same generated type
+    ///at the front of the array will override those at the back.
+    member __.Arbitrary with get() = arbitrary and set(v) = arbitrary <- v; config <- {config with Arbitrary = v}
+    ///If set, suppresses the output from the test if the test is successful. This can be useful when running tests
+    ///with TestDriven.net, because TestDriven.net pops up the Output window in Visual Studio if a test fails; thus,
+    ///when conditioned to that behaviour, it's always a bit jarring to receive output from passing tests.
+    ///The default is false, which means that FsCheck will also output test results on success, but if set to true,
+    ///FsCheck will suppress output in the case of a passing test. This setting doesn't affect the behaviour in case of
+    ///test failures.
+    member __.QuietOnSuccess with get() = quietOnSuccess and set(v) = quietOnSuccess <- v; config <- {config with QuietOnSuccess = Some v}
+    
+    member internal __.Config = config
+    
+
+// type internal UniversalArbitrary(input: obj list) =
+//     member __.Get<'T>() =
+//         let t = typeof<'T>
+//         let o = Seq.find (fun o -> o.GetType()=t) input
+//         o :?> 'T
 
 ///Set common configuration for all properties within this class or module
 [<AttributeUsage(AttributeTargets.Class ||| AttributeTargets.Assembly, AllowMultiple = false)>]
 type public PropertiesAttribute() = inherit PropertyAttribute()
 
 /// The xUnit2 test runner for the PropertyAttribute that executes the test via FsCheck
-type PropertyTestCase(diagnosticMessageSink:IMessageSink, defaultMethodDisplay:TestMethodDisplay, defaultMethodDisplayOptions:TestMethodDisplayOptions, testMethod:ITestMethod, ?testMethodArguments:obj []) =
+type public PropertyTestCase(diagnosticMessageSink:IMessageSink, defaultMethodDisplay:TestMethodDisplay, defaultMethodDisplayOptions:TestMethodDisplayOptions, testMethod:ITestMethod, ?testMethodArguments:obj []) =
     inherit XunitTestCase(diagnosticMessageSink, defaultMethodDisplay, defaultMethodDisplayOptions, testMethod, (match testMethodArguments with | None -> null | Some v -> v))
 
     let combineAttributes (configs: (PropertyConfig option) list) =
@@ -185,11 +240,12 @@ type PropertyTestCase(diagnosticMessageSink:IMessageSink, defaultMethodDisplay:T
             
         let getConfig (attr: IAttributeInfo) =
             attr.GetNamedArgument<PropertyConfig> "Config"
-
+            
         let config = combineAttributes [
               yield this.TestMethod.TestClass.Class.Assembly.GetCustomAttributes(typeof<PropertiesAttribute>) |> Seq.tryHead |> Option.map getConfig
               yield! getPropertiesOnDeclaringClasses this.TestMethod.TestClass
-              yield this.TestMethod.Method.GetCustomAttributes(typeof<PropertyAttribute>) |> Seq.head |> getConfig |> Some]
+              yield this.TestMethod.Method.GetCustomAttributes(typeof<PropertyAttribute>) |> Seq.tryHead |> Option.map getConfig
+              yield this.TestMethod.Method.GetCustomAttributes(typeof<PropertyTheoryAttribute>) |> Seq.tryHead |> Option.map getConfig]
         
         { config with Arbitrary = config.Arbitrary }
         |> PropertyConfig.toConfig output 
@@ -201,7 +257,7 @@ type PropertyTestCase(diagnosticMessageSink:IMessageSink, defaultMethodDisplay:T
             constructorArguments
             |> Array.tryFind (fun x -> x :? TestOutputHelper)
             |> Option.map (fun x -> x :?> TestOutputHelper)
-            |> Option.defaultValue (new TestOutputHelper())
+            |> Option.defaultValue (TestOutputHelper())
         outputHelper.Initialize(messageBus, test)
 
         let dispose testClass =
@@ -212,6 +268,47 @@ type PropertyTestCase(diagnosticMessageSink:IMessageSink, defaultMethodDisplay:T
                 | :? IDisposable as d -> d.Dispose()
                 | _ -> ()
 
+        let getExtraData () =
+            let getDataDiscoverer (discovererAttribute : IAttributeInfo) =
+                let discoverer = ExtensibilityPointFactory.GetDataDiscoverer(diagnosticMessageSink, discovererAttribute)
+                if discoverer = null then None
+                else Some discoverer
+            
+            let getDiscoverer (dataAttribute : IAttributeInfo) =
+                let discoverAttr = dataAttribute.GetCustomAttributes(typeof<DataDiscovererAttribute>) |> Seq.tryHead
+                match discoverAttr with
+                | None -> None
+                | Some attr -> getDataDiscoverer attr
+            
+            let dataAttribute = this.Method.GetCustomAttributes(typeof<DataAttribute>) |> Seq.tryHead
+            match dataAttribute with
+            | None -> [||]
+            | Some attr ->
+                match getDiscoverer <| attr with
+                | None -> [||]
+                | Some discoverer ->
+                    let data = discoverer.GetData(attr, this.Method)
+                    match Seq.tryHead data with
+                    | None -> [||]
+                    | Some head -> head
+                    
+        let getExtraConfig (config: Config) =
+            let getConfig o =
+                let t = o.GetType()
+                let gen = typeof<FsCheck.Fluent.Gen>.GetMethod(nameof FsCheck.Fluent.Gen.Constant).GetGenericMethodDefinition().MakeGenericMethod(t).Invoke(null, [|o|])
+                let arbMethods = typeof<FsCheck.Fluent.Arb>.GetMethods()
+                let arbFrom = Array.find (fun (m: MethodInfo) -> (m.Name = nameof FsCheck.Fluent.Arb.From) && m.GetParameters() |> Array.length = 1) arbMethods
+                let arb = arbFrom.GetGenericMethodDefinition().MakeGenericMethod(t).Invoke(null, [|gen|])
+                config.GetType().GetMethod("WithArbitraryObject").GetGenericMethodDefinition().MakeGenericMethod(t).Invoke(config, [|arb|]) :?> Config
+                
+            let rec call objList resultConfig =
+                match objList with
+                | [] -> resultConfig
+                | head::tail -> call tail (getConfig head)
+                
+            let list = List.ofArray <| getExtraData()
+            call <| list <| config
+            
         let testExec() =            
             let config = this.Init(outputHelper)
             let timer = ExecutionTimer()
@@ -219,13 +316,18 @@ type PropertyTestCase(diagnosticMessageSink:IMessageSink, defaultMethodDisplay:T
                 try
                     let xunitRunner = if config.Runner :? XunitRunner then (config.Runner :?> XunitRunner) else XunitRunner()
                     let runMethod = this.TestMethod.Method.ToRuntimeMethod()
+                    
                     let target =
                         let testClass = this.TestMethod.TestClass.Class.ToRuntimeType()
                         if (not (isNull this.TestMethod.TestClass)) && not this.TestMethod.Method.IsStatic then
                             Some (test.CreateTestClass(testClass, constructorArguments, messageBus, timer, cancellationTokenSource))
                         else None
+                        
+                    //let extraConfig = getExtraConfig config
 
-                    timer.Aggregate(fun () -> Check.Method(config, runMethod, ?target=target))
+                    let extraConfig = config.WithArbitraryObject(Arb.fromGen(Gen.constant(42)))
+                                             .WithArbitraryObject(Arb.fromGen(Gen.constant("42")))
+                    timer.Aggregate(fun () -> Check.Method(extraConfig, runMethod, ?target=target))
 
                     dispose target
 
