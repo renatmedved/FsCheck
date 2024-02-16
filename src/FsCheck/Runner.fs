@@ -116,8 +116,21 @@ type Config = private Config of
                 ///Returns a new Config with specified EveryShrink function
                 member this.WithEveryShrink everyShrink =
                     {|this.Values with EveryShrink = everyShrink|} |> Config
+                member this.WithArbitrary (factory:Func<Arbitrary<'a>>) =
+                     let result = this.ArbMap.MergeFactory (fun()->factory.Invoke())
+                     {|this.Values with ArbMap = result|} |> Config
+                member this.WithArbitraryObject (arb:Arbitrary<'a>) =
+                     let func = Func<Arbitrary<'a>>(fun()->arb)
+                     this.WithArbitrary(func)
+                // member this.WithArbitraries (factories:Func<Arbitrary<obj>> list) =
+                //     let rec merge (arbs:Func<Arbitrary<'a>> list) (arbMap: IArbMap) =
+                //         match arbs with
+                //         | [] -> arbMap
+                //         | head::tail-> merge tail <| this.ArbMap.MergeFactory (fun()->head.Invoke())
+                //     let result = merge factories this.ArbMap
+                //     {|this.Values with ArbMap = result|} |> Config
                 ///Returns a new Config with specified Arbitrary
-                member this.WithArbitrary arbitrary =
+                member this.WithArbitrary (arbitrary: Type seq) =
                     let result = this.ArbMap |> Seq.foldBack ArbMap.mergeWithType arbitrary
                     {|this.Values with ArbMap = result|} |> Config
                 ///Returns a new Config with specified Runner
